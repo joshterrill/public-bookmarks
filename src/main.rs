@@ -1,13 +1,14 @@
-use std::env;
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use chrono::Utc;
+use dotenv::dotenv;
 use futures_util::stream::TryStreamExt;
 use futures_util::StreamExt;
 use mongodb::bson::doc;
 use mongodb::bson::oid::ObjectId;
 use mongodb::{options::ClientOptions, options::FindOptions, Client, Collection, Database};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha256::digest as Sha256;
+use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -90,9 +91,7 @@ async fn register_user(
 ) -> Result<HttpResponse, actix_web::Error> {
     let api_key = Uuid::new_v4().simple().to_string();
     let created_at = Utc::now().to_rfc3339();
-    let mut hasher = Sha256::new();
-    hasher.update(api_key.clone());
-    let hashed_api_key = format!("{:x}", hasher.finalize());
+    let hashed_api_key = Sha256(&api_key);
 
     let user_doc = UserDocument {
         id: None,
@@ -112,7 +111,7 @@ async fn register_user(
         })?;
 
     let user_res = UserRegisterResponse {
-        user_id: inserted.inserted_id.as_object_id().unwrap().to_hex(),
+        user_id: inserted.inserted_id.as_object_id().unwrap().to_hex(), // how to handle unwrap, just match err?
         api_key: api_key,
     };
 
@@ -123,7 +122,7 @@ async fn get_bookmarks_by_user(
     user_id: web::Path<String>,
     db: web::Data<Arc<Collection<BookmarkDocument>>>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let filter = doc! { "user_id": &user_id.into_inner() };
+    let filter = doc! { "user_id": user_id.to_owned() };
     let find_options = FindOptions::builder()
         .sort(doc! { "created_at": -1 })
         .limit(1)
@@ -163,12 +162,10 @@ async fn save_bookmarks(
         .to_str()
         .map_err(|_| actix_web::error::ErrorBadRequest("Invalid Authorization header format"))?;
 
-    let mut hasher = Sha256::new();
-    hasher.update(api_key);
-    let hashed_api_key = format!("{:x}", hasher.finalize());
+    let hashed_api_key = Sha256(api_key);
 
     let user_filter = doc! {
-        "_id": ObjectId::from_str(&user_id).unwrap(),
+        "_id": ObjectId::from_str(&user_id).unwrap(), // how to handle unwrap, just match err?
         "api_key": &hashed_api_key,
     };
 
@@ -243,24 +240,43 @@ fn collect_bookmarks(nodes: &[Bookmark], bookmarks: &mut Vec<Bookmark>) {
     }
 }
 
+fn exit_with_error(msg: &str, code: i32) -> ! {
+    println!("Error: {}", msg);
+    std::process::exit(code);
+}
+
 async fn init_db() -> Database {
-    let db_user = env::var("MONGODB_USER").unwrap(); // this will never panic
-    let db_password = env::var("MONGODB_PASSWORD").unwrap();
-    let db_host = env::var("MONGODB_HOST").unwrap(); // i.e. "public-bookmarks.abcde.mongodb.net"
+    let db_user = env::var("MONGODB_USER")
+        .unwrap_or_else(|_| exit_with_error("MONGODB_USER must be set", 1));
+    let db_password = env::var("MONGODB_PASSWORD")
+        .unwrap_or_else(|_| exit_with_error("MONGODB_PASSWORD must be set", 1));
+    let db_host = env::var("MONGODB_HOST")
+        .unwrap_or_else(|_| exit_with_error("MONGODB_HOST must be set", 1));
     let db_connection_url = format!(
         "mongodb+srv://{}:{}@{}/?retryWrites=true&w=majority",
         db_user, db_password, db_host
     );
-    let client_options = ClientOptions::parse(db_connection_url).await.unwrap();
-    let client = Client::with_options(client_options).unwrap();
+    if db_user.is_empty() || db_password.is_empty() || db_host.is_empty() {
+        std::process::exit(1);
+    }
+    let client_options = ClientOptions::parse(db_connection_url)
+        .await
+        .unwrap_or_else(|_| exit_with_error("Failed to parse connection URL", 1));
+    let client = Client::with_options(client_options)
+        .unwrap_or_else(|_| exit_with_error("Failed to create client", 1));
     client.database("public-bookmarks")
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    dotenv().ok();
+    let ip_bind = env::var("IP_BIND").unwrap_or_else(|_| "localhost".to_owned());
+    let port = env::var("PORT").unwrap_or_else(|_| "8000".to_owned());
     let db = init_db().await;
     let user_collection: Collection<UserDocument> = db.collection("Users");
     let bookmark_collection: Collection<BookmarkDocument> = db.collection("Bookmarks");
+
+    println!("Starting server at http://{}:{}", ip_bind, port); 
 
     HttpServer::new(move || {
         App::new()
@@ -271,7 +287,7 @@ async fn main() -> std::io::Result<()> {
             .route("/bookmarks/{user_id}", web::get().to(get_bookmarks_by_user))
             .route("/bookmarks/{user_id}", web::post().to(save_bookmarks))
     })
-    .bind(("127.0.0.1", 8000))?
+    .bind((ip_bind, port.parse::<u16>().expect("Invalid port number")))?
     .run()
     .await
 }
