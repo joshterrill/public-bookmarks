@@ -9,8 +9,8 @@ use mongodb::{options::ClientOptions, options::FindOptions, Client, Collection, 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
-use std::sync::Arc;
 use uuid::Uuid;
+use anyhow::{Context, Result};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct Bookmark {
@@ -86,7 +86,7 @@ async fn hello() -> impl Responder {
 }
 
 async fn register_user(
-    db: web::Data<Arc<Collection<UserDocument>>>,
+    db: web::Data<Collection<UserDocument>>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let api_key = Uuid::new_v4().simple().to_string();
     let created_at = Utc::now().to_rfc3339();
@@ -111,8 +111,12 @@ async fn register_user(
             ))
         })?;
 
+    let user_obj_id = inserted.inserted_id
+        .as_object_id()
+        .ok_or_else(|| actix_web::error::ErrorInternalServerError("Failed to get inserted ID"))?;
+
     let user_res = UserRegisterResponse {
-        user_id: inserted.inserted_id.as_object_id().unwrap().to_hex(),
+        user_id: user_obj_id.to_hex(),
         api_key: api_key,
     };
 
@@ -121,7 +125,7 @@ async fn register_user(
 
 async fn get_bookmarks_by_user(
     user_id: web::Path<String>,
-    db: web::Data<Arc<Collection<BookmarkDocument>>>,
+    db: web::Data<Collection<BookmarkDocument>>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let filter = doc! { "user_id": &user_id.into_inner() };
     let find_options = FindOptions::builder()
@@ -148,8 +152,8 @@ async fn get_bookmarks_by_user(
 async fn save_bookmarks(
     user_id: web::Path<String>,
     upload: actix_multipart::Multipart,
-    db: web::Data<Arc<Collection<BookmarkDocument>>>,
-    user_db: web::Data<Arc<Collection<UserDocument>>>,
+    db: web::Data<Collection<BookmarkDocument>>,
+    user_db: web::Data<Collection<UserDocument>>,
     req: HttpRequest,
 ) -> Result<HttpResponse, actix_web::Error> {
     let user_id_str = user_id.clone();
@@ -167,8 +171,12 @@ async fn save_bookmarks(
     hasher.update(api_key);
     let hashed_api_key = format!("{:x}", hasher.finalize());
 
+    let user_obj_id = ObjectId::from_str(&user_id).map_err(|_| {
+        actix_web::error::ErrorBadRequest("Invalid user ID format")
+    })?;    
+
     let user_filter = doc! {
-        "_id": ObjectId::from_str(&user_id).unwrap(),
+        "_id": user_obj_id,
         "api_key": &hashed_api_key,
     };
 
@@ -243,29 +251,29 @@ fn collect_bookmarks(nodes: &[Bookmark], bookmarks: &mut Vec<Bookmark>) {
     }
 }
 
-async fn init_db() -> Database {
-    let db_user = env::var("MONGODB_USER").unwrap(); // this will never panic
-    let db_password = env::var("MONGODB_PASSWORD").unwrap();
-    let db_host = env::var("MONGODB_HOST").unwrap(); // i.e. "public-bookmarks.abcde.mongodb.net"
+async fn init_db() -> Result<Database> {
+    let db_user = env::var("MONGODB_USER").context("MONGODB_USER not set")?;
+    let db_password = env::var("MONGODB_PASSWORD").context("MONGODB_PASSWORD not set")?;
+    let db_host = env::var("MONGODB_HOST").context("MONGODB_HOST not set")?; // i.e. "public-bookmarks.abcde.mongodb.net"
     let db_connection_url = format!(
         "mongodb+srv://{}:{}@{}/?retryWrites=true&w=majority",
         db_user, db_password, db_host
     );
-    let client_options = ClientOptions::parse(db_connection_url).await.unwrap();
-    let client = Client::with_options(client_options).unwrap();
-    client.database("public-bookmarks")
+    let client_options = ClientOptions::parse(db_connection_url).await.context("Failed to parse mongodb connection url")?;
+    let client = Client::with_options(client_options).context("Failed to create mongodb client")?;
+    Ok(client.database("public-bookmarks"))
 }
 
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    let db = init_db().await;
+async fn main() -> Result<()> {
+    let db = init_db().await.context("Failed to initialize database")?;
     let user_collection: Collection<UserDocument> = db.collection("Users");
     let bookmark_collection: Collection<BookmarkDocument> = db.collection("Bookmarks");
 
     HttpServer::new(move || {
         App::new()
-            .app_data(web::Data::new(Arc::new(user_collection.clone())))
-            .app_data(web::Data::new(Arc::new(bookmark_collection.clone())))
+            .app_data(web::Data::new(user_collection.clone()))
+            .app_data(web::Data::new(bookmark_collection.clone()))
             .route("/", web::get().to(hello))
             .route("/register", web::post().to(register_user))
             .route("/bookmarks/{user_id}", web::get().to(get_bookmarks_by_user))
@@ -274,4 +282,7 @@ async fn main() -> std::io::Result<()> {
     .bind(("127.0.0.1", 8000))?
     .run()
     .await
+    .context("Failed to start http server")?;
+
+    Ok(())
 }
