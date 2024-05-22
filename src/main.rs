@@ -1,13 +1,14 @@
-use std::env;
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use chrono::Utc;
+use dotenv::dotenv;
 use futures_util::stream::TryStreamExt;
 use futures_util::StreamExt;
 use mongodb::bson::doc;
 use mongodb::bson::oid::ObjectId;
 use mongodb::{options::ClientOptions, options::FindOptions, Client, Collection, Database};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha256::digest as Sha256;
+use std::env;
 use std::str::FromStr;
 use uuid::Uuid;
 use anyhow::{Context, Result};
@@ -90,9 +91,7 @@ async fn register_user(
 ) -> Result<HttpResponse, actix_web::Error> {
     let api_key = Uuid::new_v4().simple().to_string();
     let created_at = Utc::now().to_rfc3339();
-    let mut hasher = Sha256::new();
-    hasher.update(api_key.clone());
-    let hashed_api_key = format!("{:x}", hasher.finalize());
+    let hashed_api_key = Sha256(&api_key);
 
     let user_doc = UserDocument {
         id: None,
@@ -127,7 +126,7 @@ async fn get_bookmarks_by_user(
     user_id: web::Path<String>,
     db: web::Data<Collection<BookmarkDocument>>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let filter = doc! { "user_id": &user_id.into_inner() };
+    let filter = doc! { "user_id": user_id.to_owned() };
     let find_options = FindOptions::builder()
         .sort(doc! { "created_at": -1 })
         .limit(1)
@@ -167,9 +166,7 @@ async fn save_bookmarks(
         .to_str()
         .map_err(|_| actix_web::error::ErrorBadRequest("Invalid Authorization header format"))?;
 
-    let mut hasher = Sha256::new();
-    hasher.update(api_key);
-    let hashed_api_key = format!("{:x}", hasher.finalize());
+    let hashed_api_key = Sha256(api_key);
 
     let user_obj_id = ObjectId::from_str(&user_id).map_err(|_| {
         actix_web::error::ErrorBadRequest("Invalid user ID format")
@@ -251,7 +248,7 @@ fn collect_bookmarks(nodes: &[Bookmark], bookmarks: &mut Vec<Bookmark>) {
     }
 }
 
-async fn init_db() -> Result<Database> {
+async fn init_db() -> Database {
     let db_user = env::var("MONGODB_USER").context("MONGODB_USER not set")?;
     let db_password = env::var("MONGODB_PASSWORD").context("MONGODB_PASSWORD not set")?;
     let db_host = env::var("MONGODB_HOST").context("MONGODB_HOST not set")?; // i.e. "public-bookmarks.abcde.mongodb.net"
@@ -265,10 +262,15 @@ async fn init_db() -> Result<Database> {
 }
 
 #[actix_web::main]
-async fn main() -> Result<()> {
-    let db = init_db().await.context("Failed to initialize database")?;
+async fn main() -> std::io::Result<()> {
+    dotenv().ok();
+    let ip_bind = env::var("IP_BIND").unwrap_or_else(|_| "localhost".to_owned());
+    let port = env::var("PORT").unwrap_or_else(|_| "8000".to_owned());
+    let db = init_db().await;
     let user_collection: Collection<UserDocument> = db.collection("Users");
     let bookmark_collection: Collection<BookmarkDocument> = db.collection("Bookmarks");
+
+    println!("Starting server at http://{}:{}", ip_bind, port); 
 
     HttpServer::new(move || {
         App::new()
@@ -279,7 +281,7 @@ async fn main() -> Result<()> {
             .route("/bookmarks/{user_id}", web::get().to(get_bookmarks_by_user))
             .route("/bookmarks/{user_id}", web::post().to(save_bookmarks))
     })
-    .bind(("127.0.0.1", 8000))?
+    .bind((ip_bind, port.parse::<u16>().expect("Invalid port number")))?
     .run()
     .await
     .context("Failed to start http server")?;
