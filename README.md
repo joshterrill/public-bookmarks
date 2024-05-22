@@ -2,6 +2,17 @@
 
 A REST API for publicly publishing and viewing your bookmarks.
 
+### Requirements
+
+* MongoDB
+
+### Installation
+
+1. Run `cp .env.examples .env`
+2. Replace environment variables placeholders with real values
+3. Run `cargo build --release`
+4. And run binary at `targer/release/public-bookmarks`
+
 ### Registration
 ```bash
 curl --request POST 'http://localhost:8000/register'
@@ -33,8 +44,10 @@ curl 'http://localhost:8000/bookmarks/664ae32a9cfcc7a67c315ae0'
 ```
 
 ### Todo
-* Define bookmark folders to sync as part of user registration
+* Define bookmark folders[] to sync as part of user registration
 * Add upsert calls on `Bookmarks` collection
+* Create Github action to build releasees for all targets based on pushes to master
+* Add support for other browsers such as Edge, Firefox, Safari
 
 ### License
 MIT
