@@ -5,6 +5,7 @@ use futures_util::stream::TryStreamExt;
 use futures_util::StreamExt;
 use mongodb::bson::doc;
 use mongodb::bson::oid::ObjectId;
+use mongodb::options::FindOneAndUpdateOptions;
 use mongodb::{options::ClientOptions, options::FindOptions, Client, Collection, Database};
 use serde::{Deserialize, Serialize};
 use sha256::digest as Sha256;
@@ -12,6 +13,7 @@ use std::env;
 use std::str::FromStr;
 use uuid::Uuid;
 use anyhow::{Context, Result};
+use mongodb::bson::Bson;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct Bookmark {
@@ -61,6 +63,7 @@ struct BookmarkDocument {
     user_id: String,
     bookmarks: Vec<Bookmark>,
     created_at: String,
+    previous_last_bookmark_url: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -69,6 +72,12 @@ struct UserDocument {
     id: Option<ObjectId>,
     api_key: String,
     created_at: String,
+    folders: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct UserRegisterRequest {
+    folders: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -87,6 +96,7 @@ async fn hello() -> impl Responder {
 }
 
 async fn register_user(
+    user_register_req: web::Json<UserRegisterRequest>,
     db: web::Data<Collection<UserDocument>>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let api_key = Uuid::new_v4().simple().to_string();
@@ -97,6 +107,7 @@ async fn register_user(
         id: None,
         api_key: hashed_api_key,
         created_at: created_at.clone(),
+        folders: user_register_req.folders.clone(),
     };
 
     let collection = db.as_ref();
@@ -214,21 +225,59 @@ async fn save_bookmarks(
         .map_err(|e| actix_web::error::ErrorBadRequest(format!("Failed to parse JSON: {}", e)))?;
 
     let mut read_later_bookmarks = Vec::new();
+    
+    let doc_user = user.unwrap();
+    
     for child in &bookmark_file.roots.bookmark_bar.children {
-        if child.name == "read later" {
+        if doc_user.folders.contains(&child.name) {
             collect_bookmarks(&child.children, &mut read_later_bookmarks);
         }
     }
+    let collection = db.as_ref();
+    let get_existing_bookmar_by_user = collection
+        .find_one(doc! { "user_id": user_id_str.to_owned() }, None)
+        .await
+        .map_err(|e| {
+            actix_web::error::ErrorInternalServerError(format!(
+                "Failed to query database: {}",
+                e
+            ))
+        })?;
+    let mut previous_last_bookmark_url: String = get_existing_bookmar_by_user.unwrap_or(read_later_bookmarks.clone().last().map(|b| b.url.clone()).flatten().unwrap_or_default("".to_owned()));
+    // let last_bookmark_url = read_later_bookmarks.last().map(|b| b.url.clone()).flatten().unwrap_or_default();
 
     let bookmark_doc = BookmarkDocument {
-        user_id: user_id_str,
+        user_id: user_id_str.to_owned(),
         bookmarks: read_later_bookmarks,
         created_at: Utc::now().to_rfc3339(),
+        last_indexed_url: last_bookmark_url,
     };
+    impl Into<Bson> for Bookmark {
+        fn into(self) -> Bson {
+            Bson::Document(doc! {
+                "name": self.name,
+                "url": self.url,
+                "bookmark_type": self.bookmark_type,
+            })
+        }
+    }
 
-    let collection = db.as_ref();
+    impl Into<Bson> for BookmarkDocument {
+        fn into(self) -> Bson {
+            Bson::Document(doc! {
+                "user_id": self.user_id,
+                "bookmarks": self.bookmarks.into_iter().map(|b| b.into()).collect::<Vec<Bson>>(),
+                "created_at": self.created_at,
+                "last_indexed_url": self.last_indexed_url,
+            })
+        }
+    }
+
+    let insert_options = FindOneAndUpdateOptions::builder()
+        .upsert(Some(true))
+        .build();
     collection
-        .insert_one(bookmark_doc.clone(), None)
+        .find_one_and_update(doc! { "user_id": user_id_str.to_owned() }, doc! { "$set": bookmark_doc.to_owned() }, Some(insert_options))
         .await
         .map_err(|e| {
             actix_web::error::ErrorInternalServerError(format!(
@@ -237,7 +286,7 @@ async fn save_bookmarks(
             ))
         })?;
 
-    Ok(HttpResponse::Accepted().json(bookmark_doc))
+    Ok(HttpResponse::Accepted().json(bookmark_doc.to_owned()))
 }
 
 fn collect_bookmarks(nodes: &[Bookmark], bookmarks: &mut Vec<Bookmark>) {
@@ -248,7 +297,7 @@ fn collect_bookmarks(nodes: &[Bookmark], bookmarks: &mut Vec<Bookmark>) {
     }
 }
 
-async fn init_db() -> Database {
+async fn init_db() -> Result<Database> {
     let db_user = env::var("MONGODB_USER").context("MONGODB_USER not set")?;
     let db_password = env::var("MONGODB_PASSWORD").context("MONGODB_PASSWORD not set")?;
     let db_host = env::var("MONGODB_HOST").context("MONGODB_HOST not set")?; // i.e. "public-bookmarks.abcde.mongodb.net"
@@ -262,11 +311,11 @@ async fn init_db() -> Database {
 }
 
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<()> {
     dotenv().ok();
     let ip_bind = env::var("IP_BIND").unwrap_or_else(|_| "localhost".to_owned());
     let port = env::var("PORT").unwrap_or_else(|_| "8000".to_owned());
-    let db = init_db().await;
+    let db = init_db().await?;
     let user_collection: Collection<UserDocument> = db.collection("Users");
     let bookmark_collection: Collection<BookmarkDocument> = db.collection("Bookmarks");
 
