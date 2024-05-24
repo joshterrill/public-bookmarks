@@ -3,8 +3,9 @@ use chrono::Utc;
 use dotenv::dotenv;
 use futures_util::stream::TryStreamExt;
 use futures_util::StreamExt;
-use mongodb::bson::doc;
+use mongodb::bson::{doc, Bson};
 use mongodb::bson::oid::ObjectId;
+use mongodb::options::FindOneAndUpdateOptions;
 use mongodb::{options::ClientOptions, options::FindOptions, Client, Collection, Database};
 use serde::{Deserialize, Serialize};
 use sha256::digest as Sha256;
@@ -19,16 +20,10 @@ struct Bookmark {
     date_last_used: Option<String>,
     guid: Option<String>,
     id: Option<String>,
-    meta_info: Option<MetaInfo>,
     name: Option<String>,
     #[serde(rename = "type")]
     bookmark_type: Option<String>,
     url: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-struct MetaInfo {
-    power_bookmark_meta: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -69,7 +64,14 @@ struct UserDocument {
     id: Option<ObjectId>,
     api_key: String,
     created_at: String,
+    folders: Vec<String>,
 }
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct UserRegisterRequest {
+    folders: Vec<String>,
+}
+
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct UserRegisterResponse {
@@ -82,11 +84,36 @@ struct ErrorResponse {
     error: String,
 }
 
+impl Into<Bson> for Bookmark {
+    fn into(self) -> Bson {
+        Bson::Document(doc! {
+            "name": self.name,
+            "url": self.url,
+            "bookmark_type": self.bookmark_type,
+            "date_added": self.date_added,
+            "date_last_used": self.date_last_used,
+            "guid": self.guid,
+            "id": self.id,
+        })
+    }
+}
+
+impl Into<Bson> for BookmarkDocument {
+    fn into(self) -> Bson {
+        Bson::Document(doc! {
+            "user_id": self.user_id,
+            "bookmarks": self.bookmarks.into_iter().map(|b| b.into()).collect::<Vec<Bson>>(),
+            "created_at": self.created_at,
+        })
+    }
+}
+
 async fn hello() -> impl Responder {
     HttpResponse::Ok().body("Hello, world!")
 }
 
 async fn register_user(
+    user_register_req: web::Json<UserRegisterRequest>,
     db: web::Data<Collection<UserDocument>>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let api_key = Uuid::new_v4().simple().to_string();
@@ -97,6 +124,7 @@ async fn register_user(
         id: None,
         api_key: hashed_api_key,
         created_at: created_at.clone(),
+        folders: user_register_req.folders.clone(),
     };
 
     let collection = db.as_ref();
@@ -213,9 +241,11 @@ async fn save_bookmarks(
     let bookmark_file: BookmarkFile = serde_json::from_str(&contents)
         .map_err(|e| actix_web::error::ErrorBadRequest(format!("Failed to parse JSON: {}", e)))?;
 
+    let doc_user = user.ok_or(actix_web::error::ErrorNotFound("User not found"))?;
+
     let mut read_later_bookmarks = Vec::new();
     for child in &bookmark_file.roots.bookmark_bar.children {
-        if child.name == "read later" {
+        if doc_user.folders.contains(&child.name) {
             collect_bookmarks(&child.children, &mut read_later_bookmarks);
         }
     }
@@ -227,8 +257,11 @@ async fn save_bookmarks(
     };
 
     let collection = db.as_ref();
+    let insert_options = FindOneAndUpdateOptions::builder()
+        .upsert(Some(true))
+        .build();
     collection
-        .insert_one(bookmark_doc.clone(), None)
+        .find_one_and_update(doc! { "user_id": doc_user.id }, doc! { "$set": bookmark_doc.to_owned() }, Some(insert_options))
         .await
         .map_err(|e| {
             actix_web::error::ErrorInternalServerError(format!(
@@ -243,6 +276,7 @@ async fn save_bookmarks(
 fn collect_bookmarks(nodes: &[Bookmark], bookmarks: &mut Vec<Bookmark>) {
     for node in nodes {
         if node.bookmark_type.as_deref() != Some("folder") {
+            println!("Adding bookmark: {:?}", node);
             bookmarks.push(node.clone());
         }
     }
