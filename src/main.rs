@@ -248,7 +248,7 @@ fn collect_bookmarks(nodes: &[Bookmark], bookmarks: &mut Vec<Bookmark>) {
     }
 }
 
-async fn init_db() -> Database {
+async fn init_db() -> Result<Database> {
     let db_user = env::var("MONGODB_USER").context("MONGODB_USER not set")?;
     let db_password = env::var("MONGODB_PASSWORD").context("MONGODB_PASSWORD not set")?;
     let db_host = env::var("MONGODB_HOST").context("MONGODB_HOST not set")?; // i.e. "public-bookmarks.abcde.mongodb.net"
@@ -262,11 +262,11 @@ async fn init_db() -> Database {
 }
 
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<()> {
     dotenv().ok();
     let ip_bind = env::var("IP_BIND").unwrap_or_else(|_| "localhost".to_owned());
     let port = env::var("PORT").unwrap_or_else(|_| "8000".to_owned());
-    let db = init_db().await;
+    let db = init_db().await?;
     let user_collection: Collection<UserDocument> = db.collection("Users");
     let bookmark_collection: Collection<BookmarkDocument> = db.collection("Bookmarks");
 
