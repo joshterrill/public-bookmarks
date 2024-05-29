@@ -11,10 +11,11 @@ jobs:
 
     strategy:
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         target:
-          - x86_64-unknown-linux-gnu
-          - x86_64-apple-darwin
-          - x86_64-pc-windows-gnu
+          ubuntu-latest: x86_64-unknown-linux-gnu
+          macos-latest: x86_64-apple-darwin
+          windows-latest: x86_64-pc-windows-gnu
 
     steps:
       - name: Checkout code
@@ -24,25 +25,27 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-          target: ${{ matrix.target }}
+          target: ${{ matrix.target[matrix.os] }}
           profile: minimal
 
-      - name: Install OS dependencies
-        if: matrix.target == 'x86_64-apple-darwin'
-          run: |
-            sudo softwareupdate -i -a
-        if: matrix.target == 'x86_64-pc-windows-gnu'
-          run: |
-            choco install llvm
+      - name: Install OS dependencies on macOS
+        if: matrix.os == 'macos-latest'
+        run: |
+          sudo softwareupdate -i -a
+
+      - name: Install OS dependencies on Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          choco install llvm
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target[matrix.os] }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v2
         with:
-          name: ${{ matrix.target }}-binary
-          path: target/${{ matrix.target }}/release/*
+          name: ${{ matrix.target[matrix.os] }}-binary
+          path: target/${{ matrix.target[matrix.os] }}/release/*
 
   release:
     runs-on: ubuntu-latest
@@ -52,17 +55,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
 
-      - name: Download binaries
+      - name: Download Linux binaries
         uses: actions/download-artifact@v2
         with:
           name: x86_64-unknown-linux-gnu-binary
           path: binaries/linux
-      - name: Download binaries
+
+      - name: Download macOS binaries
         uses: actions/download-artifact@v2
         with:
           name: x86_64-apple-darwin-binary
           path: binaries/mac
-      - name: Download binaries
+
+      - name: Download Windows binaries
         uses: actions/download-artifact@v2
         with:
           name: x86_64-pc-windows-gnu-binary
@@ -108,4 +113,3 @@ jobs:
           asset_path: binaries/windows/*
           asset_name: windows-binary
           asset_content_type: application/octet-stream
-
