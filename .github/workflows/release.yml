@@ -1,9 +1,9 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - '*'
+  # push:
+    # branches:
+    #   - master  # Change this to your main branch
   workflow_dispatch:  # This line allows manual triggering
 
 jobs:
@@ -23,6 +23,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
+
+      - name: Extract version
+        id: extract_version
+        run: |
+          version=$(grep '^version =' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+          echo "::set-output name=version::$version"
 
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -46,7 +52,7 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           name: ${{ matrix.target }}-binary
-          path: target/${{ matrix.target }}/release/*
+          path: target/${{ matrix.target }}/release/public-bookmarks
 
   release:
     runs-on: ubuntu-latest
@@ -60,19 +66,28 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           name: x86_64-unknown-linux-gnu-binary
-          path: binaries/linux
+          path: binaries/linux/public-bookmarks
 
       - name: Download macOS binaries
         uses: actions/download-artifact@v2
         with:
           name: x86_64-apple-darwin-binary
-          path: binaries/mac
+          path: binaries/mac/public-bookmarks
 
       - name: Download Windows binaries
         uses: actions/download-artifact@v2
         with:
           name: x86_64-pc-windows-gnu-binary
-          path: binaries/windows
+          path: binaries/windows/public-bookmarks
+
+      - name: Create Git Tag
+        id: create_tag
+        run: |
+          version=${{ steps.extract_version.outputs.version }}
+          git config --global user.email "josh@hacked.codes"
+          git config --global user.name "Josh Terrill"
+          git tag -a v$version -m "Tagging version $version for release"
+          git push origin v$version
 
       - name: Create GitHub Release
         id: create_release
@@ -80,8 +95,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          tag_name: v${{ steps.extract_version.outputs.version }}
+          release_name: Release v${{ steps.extract_version.outputs.version }}
           draft: true
           prerelease: false
 
@@ -91,8 +106,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: binaries/linux/*
-          asset_name: linux-binary
+          asset_path: binaries/linux/public-bookmarks
+          asset_name: public-bookmarks-linux
           asset_content_type: application/octet-stream
 
       - name: Upload Release Asset Mac
@@ -101,8 +116,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: binaries/mac/*
-          asset_name: mac-binary
+          asset_path: binaries/mac/public-bookmarks
+          asset_name: public-bookmarks-mac
           asset_content_type: application/octet-stream
 
       - name: Upload Release Asset Windows
@@ -111,6 +126,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: binaries/windows/*
-          asset_name: windows-binary
+          asset_path: binaries/windows/public-bookmarks
+          asset_name: public-bookmarks-windows
           asset_content_type: application/octet-stream
