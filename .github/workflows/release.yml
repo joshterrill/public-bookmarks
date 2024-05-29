@@ -29,11 +29,11 @@ jobs:
 
       - name: Install OS dependencies
         if: matrix.target == 'x86_64-apple-darwin'
-        run: |
-          sudo softwareupdate -i -a
+          run: |
+            sudo softwareupdate -i -a
         if: matrix.target == 'x86_64-pc-windows-gnu'
-        run: |
-          choco install llvm
+          run: |
+            choco install llvm
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}

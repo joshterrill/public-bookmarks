@@ -245,7 +245,7 @@ async fn save_bookmarks(
 
     let mut read_later_bookmarks = Vec::new();
     for child in &bookmark_file.roots.bookmark_bar.children {
-        if doc_user.folders.contains(&child.name) {
+        if doc_user.folders.len() == 0 || doc_user.folders.contains(&child.name) {
             collect_bookmarks(&child.children, &mut read_later_bookmarks);
         }
     }
