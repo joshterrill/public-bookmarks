@@ -11,9 +11,11 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         target:
           ubuntu-latest: x86_64-unknown-linux-gnu
+          macos-latest: x86_64-apple-darwin
+          windows-latest: x86_64-pc-windows-gnu
 
     steps:
       - name: Checkout code
@@ -25,6 +27,14 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
           profile: minimal
+
+      - name: Install dependencies on macOS
+        if: matrix.os == 'macos-latest'
+        run: sudo softwareupdate -i -a
+
+      - name: Install dependencies on Windows
+        if: matrix.os == 'windows-latest'
+        run: choco install llvm
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
@@ -49,6 +59,18 @@ jobs:
           name: x86_64-unknown-linux-gnu-binary
           path: binaries/linux
 
+      - name: Download macOS binaries
+        uses: actions/download-artifact@v2
+        with:
+          name: x86_64-apple-darwin-binary
+          path: binaries/mac
+
+      - name: Download Windows binaries
+        uses: actions/download-artifact@v2
+        with:
+          name: x86_64-pc-windows-gnu-binary
+          path: binaries/windows
+
       - name: Create GitHub Release
         id: create_release
         uses: actions/create-release@v1
@@ -68,4 +90,24 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: binaries/linux/*
           asset_name: linux-binary
+          asset_content_type: application/octet-stream
+
+      - name: Upload Release Asset Mac
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: binaries/mac/*
+          asset_name: mac-binary
+          asset_content_type: application/octet-stream
+
+      - name: Upload Release Asset Windows
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: binaries/windows/*
+          asset_name: windows-binary
           asset_content_type: application/octet-stream
