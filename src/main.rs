@@ -13,6 +13,7 @@ use std::env;
 use std::str::FromStr;
 use uuid::Uuid;
 use anyhow::{Context, Result};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 struct Bookmark {
@@ -104,7 +105,7 @@ impl Into<Bson> for BookmarkDocument {
         Bson::Document(doc! {
             "user_id": self.user_id,
             "bookmarks": self.bookmarks.into_iter().map(|b| b.into()).collect::<Vec<Bson>>(),
-            "new_bookmarks": self.new_bookmarks.into_iter().map(|b| b.into()).collect::<Vec<Bson>>(), // Include new_bookmarks
+            "new_bookmarks": self.new_bookmarks.into_iter().map(|b| b.into()).collect::<Vec<Bson>>(),
             "created_at": self.created_at,
         })
     }
@@ -154,6 +155,7 @@ async fn register_user(
 
 async fn get_bookmarks_by_user(
     user_id: web::Path<String>,
+    query: web::Query<HashMap<String, String>>,
     db: web::Data<Collection<BookmarkDocument>>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let filter = doc! { "user_id": user_id.to_owned() };
@@ -170,7 +172,30 @@ async fn get_bookmarks_by_user(
     if let Some(result) = cursor.try_next().await.map_err(|e| {
         actix_web::error::ErrorInternalServerError(format!("Failed to fetch result: {}", e))
     })? {
-        Ok(HttpResponse::Ok().json(result))
+        if query.get("json").is_some() {
+            Ok(HttpResponse::Ok().json(result))
+        } else {
+            let html = format!(
+                "<html>
+                    <body>
+                        <h1>User ID: {}</h1>
+                        <p><small><a href=\"?json\">JSON</a></small></p>
+                        <h2>Newest Bookmarks:</h2>
+                        <ul>
+                            {}
+                        </ul>
+                        <h2>Bookmarks:</h2>
+                        <ul>
+                            {}
+                        </ul>
+                    </body>
+                </html>",
+                user_id,
+                result.new_bookmarks.iter().map(|b| format!("<li><a href=\"{}\" target=\"_blank\">{}</a></li>", b.url.as_deref().unwrap_or(""), b.name.as_deref().unwrap_or(""))).collect::<String>(),
+                result.bookmarks.iter().map(|b| format!("<li><a href=\"{}\" target=\"_blank\">{}</a></li>", b.url.as_deref().unwrap_or(""), b.name.as_deref().unwrap_or(""))).collect::<String>(),
+            );
+            Ok(HttpResponse::Ok().content_type("text/html").body(html))
+        }
     } else {
         Ok(HttpResponse::NotFound().json(ErrorResponse {
             error: "No bookmarks found".to_string(),
@@ -266,7 +291,6 @@ async fn save_bookmarks(
         Vec::new()
     };
 
-    use std::collections::HashSet;
     let existing_ids: HashSet<_> = existing_bookmarks.iter().filter_map(|b| b.id.as_ref()).collect();
     let new_bookmarks: Vec<Bookmark> = read_later_bookmarks
         .clone()
@@ -304,6 +328,7 @@ fn collect_bookmarks(nodes: &[Bookmark], bookmarks: &mut Vec<Bookmark>) {
         }
     }
 }
+
 
 async fn init_db() -> Result<Database> {
     let db_user = env::var("MONGODB_USER").context("MONGODB_USER not set")?;
