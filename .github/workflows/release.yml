@@ -17,8 +17,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: macos-latest
             target: x86_64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-gnu
+          # - os: windows-latest
+          #   target: x86_64-pc-windows-gnu
 
     steps:
       - name: Checkout code
@@ -41,9 +41,9 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: sudo softwareupdate -i -a
 
-      - name: Install dependencies on Windows
-        if: matrix.os == 'windows-latest'
-        run: choco install llvm
+      # - name: Install dependencies on Windows
+      #   if: matrix.os == 'windows-latest'
+      #   run: choco install llvm
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
@@ -74,11 +74,11 @@ jobs:
           name: x86_64-apple-darwin-binary
           path: binaries/mac/public-bookmarks
 
-      - name: Download Windows binaries
-        uses: actions/download-artifact@v2
-        with:
-          name: x86_64-pc-windows-gnu-binary
-          path: binaries/windows/public-bookmarks
+      # - name: Download Windows binaries
+      #   uses: actions/download-artifact@v2
+      #   with:
+      #     name: x86_64-pc-windows-gnu-binary
+      #     path: binaries/windows/public-bookmarks
 
       - name: Create Git Tag
         id: create_tag
@@ -120,12 +120,12 @@ jobs:
           asset_name: public-bookmarks-mac
           asset_content_type: application/octet-stream
 
-      - name: Upload Release Asset Windows
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: binaries/windows/public-bookmarks
-          asset_name: public-bookmarks-windows
-          asset_content_type: application/octet-stream
+      # - name: Upload Release Asset Windows
+      #   uses: actions/upload-release-asset@v1
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   with:
+      #     upload_url: ${{ steps.create_release.outputs.upload_url }}
+      #     asset_path: binaries/windows/public-bookmarks
+      #     asset_name: public-bookmarks-windows
+      #     asset_content_type: application/octet-stream
