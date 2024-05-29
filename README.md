@@ -1,5 +1,7 @@
 # Public Bookmarks [WIP]
 
+https://bookmarks.dangerous.dev/
+
 A REST API for publicly publishing and viewing your bookmarks.
 
 ### Requirements
@@ -11,13 +13,20 @@ A REST API for publicly publishing and viewing your bookmarks.
 1. Run `cp .env.examples .env`
 2. Replace environment variables placeholders with real values
 3. Run `cargo build --release`
-4. And run binary at `targer/release/public-bookmarks`
+4. And run binary at `target/release/public-bookmarks`
 
 ### Registration
 ```bash
-curl --request POST 'http://localhost:8000/register'
+curl --location 'http://localhost:8081/register' \
+--header 'Content-type: application/json' \
+--data '{
+    "folders": ["read later"]
+}'
 # {"user_id":"664ae32a9cfcc7a67c315ae0", "api_key":"563ea80f61a94026826fdf280c883bce"}
 ```
+
+**If no folders are provided, it will take all bookmarks**
+
 
 ### Upload bookmarks (Chrome)
 
@@ -44,8 +53,6 @@ curl 'http://localhost:8000/bookmarks/664ae32a9cfcc7a67c315ae0'
 ```
 
 ### Todo
-* Define bookmark folders[] to sync as part of user registration
-* Add upsert calls on `Bookmarks` collection
 * Create Github action to build releasees for all targets based on pushes to master
 * Add support for other browsers such as Edge, Firefox, Safari
 
