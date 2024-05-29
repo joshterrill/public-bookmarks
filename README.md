@@ -17,7 +17,7 @@ A REST API for publicly publishing and viewing your bookmarks.
 
 ### Registration
 ```bash
-curl --location 'http://localhost:8081/register' \
+curl --location 'http://localhost:8000/register' \
 --header 'Content-type: application/json' \
 --data '{
     "folders": ["read later"]

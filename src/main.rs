@@ -14,7 +14,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 use anyhow::{Context, Result};
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 struct Bookmark {
     date_added: Option<String>,
     date_last_used: Option<String>,
@@ -55,6 +55,8 @@ struct BookmarkNode {
 struct BookmarkDocument {
     user_id: String,
     bookmarks: Vec<Bookmark>,
+    #[serde(default)]
+    new_bookmarks: Vec<Bookmark>,
     created_at: String,
 }
 
@@ -71,7 +73,6 @@ struct UserDocument {
 struct UserRegisterRequest {
     folders: Vec<String>,
 }
-
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct UserRegisterResponse {
@@ -103,6 +104,7 @@ impl Into<Bson> for BookmarkDocument {
         Bson::Document(doc! {
             "user_id": self.user_id,
             "bookmarks": self.bookmarks.into_iter().map(|b| b.into()).collect::<Vec<Bson>>(),
+            "new_bookmarks": self.new_bookmarks.into_iter().map(|b| b.into()).collect::<Vec<Bson>>(), // Include new_bookmarks
             "created_at": self.created_at,
         })
     }
@@ -198,7 +200,7 @@ async fn save_bookmarks(
 
     let user_obj_id = ObjectId::from_str(&user_id).map_err(|_| {
         actix_web::error::ErrorBadRequest("Invalid user ID format")
-    })?;    
+    })?;
 
     let user_filter = doc! {
         "_id": user_obj_id,
@@ -250,18 +252,40 @@ async fn save_bookmarks(
         }
     }
 
+    let collection = db.as_ref();
+
+    let filter = doc! { "user_id": &user_id_str };
+    let existing_doc = collection
+        .find_one(filter.clone(), None)
+        .await
+        .map_err(|e| actix_web::error::ErrorInternalServerError(format!("Failed to query database: {}", e)))?;
+
+    let existing_bookmarks: Vec<Bookmark> = if let Some(existing_doc) = existing_doc {
+        existing_doc.bookmarks
+    } else {
+        Vec::new()
+    };
+
+    use std::collections::HashSet;
+    let existing_ids: HashSet<_> = existing_bookmarks.iter().filter_map(|b| b.id.as_ref()).collect();
+    let new_bookmarks: Vec<Bookmark> = read_later_bookmarks
+        .clone()
+        .into_iter()
+        .filter(|b| b.id.as_ref().map_or(false, |id| !existing_ids.contains(id)))
+        .collect();
+
     let bookmark_doc = BookmarkDocument {
         user_id: user_id_str,
         bookmarks: read_later_bookmarks,
+        new_bookmarks,
         created_at: Utc::now().to_rfc3339(),
     };
 
-    let collection = db.as_ref();
     let insert_options = FindOneAndUpdateOptions::builder()
         .upsert(Some(true))
         .build();
     collection
-        .find_one_and_update(doc! { "user_id": doc_user.id }, doc! { "$set": bookmark_doc.to_owned() }, Some(insert_options))
+        .find_one_and_update(filter, doc! { "$set": bookmark_doc.to_owned() }, Some(insert_options))
         .await
         .map_err(|e| {
             actix_web::error::ErrorInternalServerError(format!(
@@ -276,7 +300,6 @@ async fn save_bookmarks(
 fn collect_bookmarks(nodes: &[Bookmark], bookmarks: &mut Vec<Bookmark>) {
     for node in nodes {
         if node.bookmark_type.as_deref() != Some("folder") {
-            println!("Adding bookmark: {:?}", node);
             bookmarks.push(node.clone());
         }
     }

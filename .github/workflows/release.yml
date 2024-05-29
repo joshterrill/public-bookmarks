@@ -15,8 +15,8 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            target: x86_64-apple-darwin
+          # - os: macos-latest
+          #   target: x86_64-apple-darwin
           # - os: windows-latest
           #   target: x86_64-pc-windows-gnu
 
@@ -37,9 +37,9 @@ jobs:
           target: ${{ matrix.target }}
           profile: minimal
 
-      - name: Install dependencies on macOS
-        if: matrix.os == 'macos-latest'
-        run: sudo softwareupdate -i -a
+      # - name: Install dependencies on macOS
+      #   if: matrix.os == 'macos-latest'
+      #   run: sudo softwareupdate -i -a
 
       # - name: Install dependencies on Windows
       #   if: matrix.os == 'windows-latest'
@@ -68,11 +68,11 @@ jobs:
           name: x86_64-unknown-linux-gnu-binary
           path: binaries/linux/public-bookmarks
 
-      - name: Download macOS binaries
-        uses: actions/download-artifact@v2
-        with:
-          name: x86_64-apple-darwin-binary
-          path: binaries/mac/public-bookmarks
+      # - name: Download macOS binaries
+      #   uses: actions/download-artifact@v2
+      #   with:
+      #     name: x86_64-apple-darwin-binary
+      #     path: binaries/mac/public-bookmarks
 
       # - name: Download Windows binaries
       #   uses: actions/download-artifact@v2
