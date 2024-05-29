@@ -2,8 +2,8 @@ name: Release
 
 on:
   # push:
-    # branches:
-    #   - master  # Change this to your main branch
+  #   branches:
+  #     - main  # Change this to your main branch
   workflow_dispatch:  # This line allows manual triggering
 
 jobs:
@@ -82,6 +82,8 @@ jobs:
 
       - name: Create Git Tag
         id: create_tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
         run: |
           version=${{ steps.extract_version.outputs.version }}
           git config --global user.email "josh@hacked.codes"
