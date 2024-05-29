@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
 
     strategy:
       matrix:
@@ -25,27 +25,25 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-          target: ${{ matrix.target[matrix.os] }}
+          target: ${{ matrix.target }}
           profile: minimal
 
-      - name: Install OS dependencies on macOS
+      - name: Install dependencies on macOS
         if: matrix.os == 'macos-latest'
-        run: |
-          sudo softwareupdate -i -a
+        run: sudo softwareupdate -i -a
 
-      - name: Install OS dependencies on Windows
+      - name: Install dependencies on Windows
         if: matrix.os == 'windows-latest'
-        run: |
-          choco install llvm
+        run: choco install llvm
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target[matrix.os] }}
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v2
         with:
-          name: ${{ matrix.target[matrix.os] }}-binary
-          path: target/${{ matrix.target[matrix.os] }}/release/*
+          name: ${{ matrix.target }}-binary
+          path: target/${{ matrix.target }}/release/*
 
   release:
     runs-on: ubuntu-latest
