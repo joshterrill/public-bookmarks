@@ -1,5 +1,5 @@
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use dotenv::dotenv;
 use futures_util::stream::TryStreamExt;
 use futures_util::StreamExt;
@@ -14,6 +14,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
+use chrono::offset::TimeZone;
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 struct Bookmark {
@@ -92,7 +93,7 @@ impl Into<Bson> for Bookmark {
             "name": self.name,
             "url": self.url,
             "bookmark_type": self.bookmark_type,
-            "date_added": self.date_added,
+            "date_added": convert_epoch_to_rfc3339(self.date_added),
             "date_last_used": self.date_last_used,
             "guid": self.guid,
             "id": self.id,
@@ -191,8 +192,19 @@ async fn get_bookmarks_by_user(
                     </body>
                 </html>",
                 user_id,
-                result.new_bookmarks.iter().map(|b| format!("<li><a href=\"{}\" target=\"_blank\">{}</a></li>", b.url.as_deref().unwrap_or(""), b.name.as_deref().unwrap_or(""))).collect::<String>(),
-                result.bookmarks.iter().map(|b| format!("<li><a href=\"{}\" target=\"_blank\">{}</a></li>", b.url.as_deref().unwrap_or(""), b.name.as_deref().unwrap_or(""))).collect::<String>(),
+                result.new_bookmarks.iter().rev().map(|b| 
+                    format!(
+                        "<li><a href=\"{}\" target=\"_blank\">{}</a> <small>({})</small></li>",
+                        b.url.as_deref().unwrap_or(""),
+                        b.name.as_deref().unwrap_or(""),
+                        b.date_added.as_deref().unwrap_or("N/A"),
+                    )).collect::<String>(),
+                result.bookmarks.iter().rev().map(|b|
+                    format!("<li><a href=\"{}\" target=\"_blank\">{}</a> <small>({})</small></li>",
+                    b.url.as_deref().unwrap_or(""),
+                    b.name.as_deref().unwrap_or(""),
+                    b.date_added.as_deref().unwrap_or("N/A"),
+                )).collect::<String>(),
             );
             Ok(HttpResponse::Ok().content_type("text/html").body(html))
         }
@@ -329,6 +341,25 @@ fn collect_bookmarks(nodes: &[Bookmark], bookmarks: &mut Vec<Bookmark>) {
     }
 }
 
+fn convert_epoch_to_rfc3339(epoch_str: Option<String>) -> String {
+    match epoch_str {
+        Some(epoch_str) => {
+            let filetime: i64 = epoch_str.parse::<i64>().context("Failed to parse epoch string").unwrap();
+            let total_seconds = filetime / 1_000_000;
+            let remaining_nanoseconds = (filetime % 10_000_000) * 100;
+            let seconds_since_unix_epoch = total_seconds - 11644473600;
+            let naive_datetime = DateTime::from_timestamp(seconds_since_unix_epoch, remaining_nanoseconds as u32);
+            match naive_datetime {
+                Some(naive_datetime) => {
+                    let datetime_utc: DateTime<Utc> = Utc.from_utc_datetime(&naive_datetime.naive_utc());
+                    datetime_utc.to_rfc3339()
+                }
+                None => "N/A".to_string(),
+            }
+        }
+        None => "N/A".to_string(),
+    }
+}
 
 async fn init_db() -> Result<Database> {
     let db_user = env::var("MONGODB_USER").context("MONGODB_USER not set")?;
